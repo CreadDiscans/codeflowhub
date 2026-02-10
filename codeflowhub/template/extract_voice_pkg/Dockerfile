@@ -1,3 +1,3 @@
-FROM harbor.k8s.sys-flow.com/flowhub/template:base-gpu
+FROM creaddiscans/codeflowhub:base-gpu
 
 RUN pip install demucs

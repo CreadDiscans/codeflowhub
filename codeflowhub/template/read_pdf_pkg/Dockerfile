@@ -1,4 +1,4 @@
-FROM harbor.k8s.sys-flow.com/flowhub/template:base-cpu
+FROM creaddiscans/codeflowhub:base-cpu
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 libgomp1 \
