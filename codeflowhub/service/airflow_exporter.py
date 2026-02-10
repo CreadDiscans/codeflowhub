@@ -281,12 +281,13 @@ base_volume_mounts = [
     def _generate_input_commands(self, task, is_first):
         """Input 데이터 명령어 생성"""
         if is_first:
-            return "echo '{{{{ params | tojson }}}}' >> /app/input/0.json"
+            return '\n'.join(["cat << 'EOF' > /app/input/0.json", '{{{{ params | tojson }}}}', 'EOF'])
         if not task.depend:
             return "echo '{{}}' >> /app/input/0.json"
 
-        commands = [f"echo '{{{{{{{{ ti.xcom_pull(task_ids=\"{dep.name}\") | tojson }}}}}}}}' >> /app/input/{i}.json"
-                    for i, dep in enumerate(task.depend)]
+        commands = [
+            '\n'.join([f"cat << 'EOF' > /app/input/{i}.json", f'{{{{{{{{ ti.xcom_pull(task_ids=\"{dep.name}\") | tojson }}}}}}}}', 'EOF'])
+            for i, dep in enumerate(task.depend)]
         return "\n                ".join(commands)
 
     def _build_tolerations_code(self, task):
