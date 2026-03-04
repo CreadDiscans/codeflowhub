@@ -43,10 +43,14 @@ class S3Storage(Storage):
     def https_to_s3_url(self, https_url: str) -> str:
         parsed = urlparse(https_url)
         netloc = parsed.netloc
-        suffix = ".s3.amazonaws.com"
-        if netloc.endswith(suffix):
-            bucket = netloc[:-len(suffix)]
-        else:
+        suffixs = [".s3.amazonaws.com", ".s3.ap-northeast-2.amazonaws.com"]
+        find_bucket = False
+        for suffix in suffixs:
+            if netloc.endswith(suffix):
+                bucket = netloc[:-len(suffix)]
+                find_bucket = True
+                break
+        if not find_bucket:
             raise ValueError(f"URL netloc does not end with expected suffix: {netloc}")
         key = parsed.path.lstrip("/")
         return f"s3://{bucket}/{key}"
