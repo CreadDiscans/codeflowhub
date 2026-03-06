@@ -24,11 +24,12 @@ class FlowDecorator(BaseDecorator):
     volumes:list  # Kubernetes volumes
     airflow_sidecar_image:str  # Airflow XCom sidecar 이미지
     repo:str  # Git repository URL
+    path:str  # Git repo 내 작업 경로
     on_failure: 'BaseDecorator' = None  # 모든 task의 기본 failure handler
 
     def __init__(self, *args, namespace='default', env=None, name=None, description=None, params=None,
                  tags=None, annotations=None, service_account_name=None, volumes=None,
-                 airflow_sidecar_image=None, repo=None, on_failure=None, **kwargs):
+                 airflow_sidecar_image=None, repo=None, path=None, on_failure=None, **kwargs):
         # CLI 속성 먼저 초기화 (init()에서 사용됨)
         self._cli_export = None
         self._cli_job_dir = None
@@ -47,6 +48,7 @@ class FlowDecorator(BaseDecorator):
         self.volumes = volumes or []
         self.airflow_sidecar_image = airflow_sidecar_image
         self.repo = repo
+        self.path = path
         self.on_failure = on_failure
 
         self._initialize_env(env)

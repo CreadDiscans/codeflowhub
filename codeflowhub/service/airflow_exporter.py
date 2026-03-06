@@ -133,7 +133,10 @@ PodDefaults.SIDECAR_CONTAINER.image = '{self.xcom_sidecar_image}'
         # 공통 setup 스크립트
         if self.flow.repo:
             # repo가 있으면 git clone
-            setup_script = f"git clone {self.flow.repo} /app\n                mkdir -p /app/input"
+            if self.flow.path:
+                setup_script = f"git -c core.sshCommand=\"ssh -o StrictHostKeyChecking=no\"  clone {self.flow.repo} /repo\n                cd /repo/{self.flow.path}\n                cp -r . /app\n                mkdir -p /app/input"
+            else:
+                setup_script = f"git -c core.sshCommand=\"ssh -o StrictHostKeyChecking=no\"  clone {self.flow.repo} /app\n                mkdir -p /app/input"
         else:
             # ConfigMap에서 코드 복사 (base64 → 마운트된 파일 사용)
             setup_script = f"mkdir -p /app/input\n                cp {self.configmap_mount_path}/{self.workflow_filename} /app/{self.workflow_filename}"
