@@ -3,6 +3,19 @@ import tempfile
 
 from codeflowhub import get_storage
 
+MAX_SIDE_LIMIT = 3000
+
+def resize_if_needed(img):
+    w, h = img.size
+    max_side = max(w, h)
+    if max_side > MAX_SIDE_LIMIT:
+        scale = MAX_SIDE_LIMIT / max_side
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        print(f"[base] Resizing image ({w}x{h}) to ({new_w}x{new_h}) to fit within max_side_limit of {MAX_SIDE_LIMIT}.")
+        img = img.resize((new_w, new_h))
+    return img
+
 def render_page_to_image(doc, page_number, out_path, dpi=300, crop_bbox=None):
     import fitz
     from PIL import Image
@@ -18,6 +31,7 @@ def render_page_to_image(doc, page_number, out_path, dpi=300, crop_bbox=None):
         x1 = int(crop_bbox[2] * scale)
         y1 = int(crop_bbox[3] * scale)
         img = img.crop((x0, y0, x1, y1))
+    img = resize_if_needed(img)
     img.save(out_path, "PNG", icc_profile=None)
 
 def safe_pixmap_to_png_with_fallback(doc, page_number, info, out_path, dpi=200):
@@ -36,6 +50,7 @@ def safe_pixmap_to_png_with_fallback(doc, page_number, info, out_path, dpi=200):
 
         mode = "L" if pix.n == 1 else "RGB"
         img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+        img = resize_if_needed(img)
         img.save(out_path, "PNG", icc_profile=None)
         return True
     except Exception as e:
