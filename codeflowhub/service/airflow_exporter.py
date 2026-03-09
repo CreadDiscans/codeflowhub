@@ -264,6 +264,9 @@ base_volume_mounts = [
         volume_mounts_code = self._build_volume_mounts_code(task)
         container_resources_code = self._build_container_resources_code(task)
 
+        # pool 추가
+        pool_code = f"\n        pool='{task.pool}'," if hasattr(task, 'pool') and task.pool else ""
+
         # trigger_rule 추가
         trigger_rule_code = f"\n        trigger_rule='{trigger_rule}'," if trigger_rule else ""
 
@@ -273,7 +276,7 @@ base_volume_mounts = [
         operator_code = f'''    {task.name} = KubernetesPodOperator(
         **common,
         task_id='{task.name}',
-        image='{task_image}',{trigger_rule_code}{retries_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}
+        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}
         arguments=[
             f\'\'\'{arguments}\'\'\'
         ],

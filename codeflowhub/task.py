@@ -15,13 +15,14 @@ class TaskDecorator(BaseDecorator):
 
     def __init__(self, *args, cpu='1', memory='1Gi', gpu=None, image=None,
                  node_selector=None, tolerations: list[Toleration] = None,
-                 volume_mounts: list[VolumeMount] = None, **kwargs):
+                 volume_mounts: list[VolumeMount] = None, pool: str = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.set_resource(cpu, memory, gpu)
         self.image = image
         self.node_selector = node_selector or {}
         self.tolerations = tolerations or []
         self.volume_mounts = volume_mounts or []
+        self.pool = pool
         self._is_flowhub_task = True
 
     def set_resource(self, cpu, memory, gpu):
