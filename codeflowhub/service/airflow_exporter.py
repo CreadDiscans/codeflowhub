@@ -458,7 +458,10 @@ base_volume_mounts = [
                 f"k8s.V1Container(\n                        {params_str}\n                    )"
             )
 
-        containers_str = ',\n                    '.join(sidecar_items)
+        # Airflow는 name='base'인 컨테이너를 main으로 인식.
+        # 없으면 containers[0]을 main으로 병합하므로 반드시 placeholder를 첫 번째에 삽입.
+        all_containers = ["k8s.V1Container(name='base')"] + sidecar_items
+        containers_str = ',\n                    '.join(all_containers)
 
         # full_pod_spec에 포함할 emptyDir 볼륨 수집
         empty_dir_items = []
@@ -470,14 +473,17 @@ base_volume_mounts = [
                     f"                    )"
                 )
 
+        share_proc_ns = any(getattr(sc, 'share_process_namespace', False) for sc in task.sidecars)
+        share_proc_ns_str = "share_process_namespace=True,\n                " if share_proc_ns else ""
+
         if empty_dir_items:
             volumes_str = ',\n                    '.join(empty_dir_items)
             spec_body = (
-                f"containers=[\n                    {containers_str}\n                ],\n"
+                f"{share_proc_ns_str}containers=[\n                    {containers_str}\n                ],\n"
                 f"                volumes=[\n                    {volumes_str}\n                ]"
             )
         else:
-            spec_body = f"containers=[\n                    {containers_str}\n                ]"
+            spec_body = f"{share_proc_ns_str}containers=[\n                    {containers_str}\n                ]"
 
         return (
             f"\n        full_pod_spec=k8s.V1Pod(\n"

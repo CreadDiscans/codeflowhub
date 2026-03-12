@@ -30,3 +30,4 @@ class SidecarContainer:
     memory: Optional[str] = None
     command: Optional[list] = None
     args: Optional[list] = None
+    share_process_namespace: bool = False
