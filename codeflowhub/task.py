@@ -1,5 +1,5 @@
 from .base import BaseDecorator
-from .model import Toleration, VolumeMount
+from .model import Toleration, VolumeMount, SidecarContainer
 from .action import Action
 
 class TaskDecorator(BaseDecorator):
@@ -12,10 +12,12 @@ class TaskDecorator(BaseDecorator):
     node_selector: dict
     tolerations: list[Toleration]
     volume_mounts: list[VolumeMount]
+    sidecars: list[SidecarContainer]
 
     def __init__(self, *args, cpu='1', memory='1Gi', gpu=None, image=None,
                  node_selector=None, tolerations: list[Toleration] = None,
-                 volume_mounts: list[VolumeMount] = None, pool: str = None, **kwargs):
+                 volume_mounts: list[VolumeMount] = None, pool: str = None,
+                 sidecars: list[SidecarContainer] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.set_resource(cpu, memory, gpu)
         self.image = image
@@ -23,6 +25,7 @@ class TaskDecorator(BaseDecorator):
         self.tolerations = tolerations or []
         self.volume_mounts = volume_mounts or []
         self.pool = pool
+        self.sidecars = sidecars or []
         self._is_flowhub_task = True
 
     def set_resource(self, cpu, memory, gpu):

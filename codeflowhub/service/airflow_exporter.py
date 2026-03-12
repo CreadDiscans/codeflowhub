@@ -52,15 +52,22 @@ class AirflowExporter:
             self.common_config['annotations'] = flow_decorator.annotations
         if flow_decorator.service_account_name:
             self.common_config['service_account_name'] = flow_decorator.service_account_name
+        # emptyDir 볼륨은 common이 아닌 full_pod_spec에 task별로 주입됨
+        self.empty_dir_volumes = {}
+
         if flow_decorator.volumes:
             # Volume 객체를 k8s.V1Volume 형태로 변환
             volumes_list = []
             for vol in flow_decorator.volumes:
-                if hasattr(vol, 'name') and hasattr(vol, 'persistent_volume_claim'):
+                if not hasattr(vol, 'name'):
+                    continue
+                if hasattr(vol, 'persistent_volume_claim') and vol.persistent_volume_claim:
                     volumes_list.append({
                         'name': vol.name,
                         'persistent_volume_claim': vol.persistent_volume_claim
                     })
+                elif hasattr(vol, 'empty_dir') and vol.empty_dir is not None:
+                    self.empty_dir_volumes[vol.name] = vol
             if volumes_list:
                 self.common_config['volumes'] = volumes_list
 
@@ -263,6 +270,7 @@ base_volume_mounts = [
         node_selector_code = self._build_node_selector_code(task)
         volume_mounts_code = self._build_volume_mounts_code(task)
         container_resources_code = self._build_container_resources_code(task)
+        sidecars_code = self._build_sidecars_code(task)
 
         # pool 추가
         pool_code = f"\n        pool='{task.pool}'," if hasattr(task, 'pool') and task.pool else ""
@@ -276,7 +284,7 @@ base_volume_mounts = [
         operator_code = f'''    {task.name} = KubernetesPodOperator(
         **common,
         task_id='{task.name}',
-        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}
+        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
         arguments=[
             f\'\'\'{arguments}\'\'\'
         ],
@@ -392,6 +400,92 @@ base_volume_mounts = [
 
         resource_requirements = f"k8s.V1ResourceRequirements(requests={repr(requests)}, limits={repr(limits)})"
         return f"\n        container_resources={resource_requirements},"
+
+    def _build_sidecars_code(self, task) -> str:
+        """full_pod_spec으로 사이드카 컨테이너 코드 생성"""
+        if not (hasattr(task, 'sidecars') and task.sidecars):
+            return ""
+
+        # 사이드카 + 태스크 volume_mounts에서 참조된 볼륨명 수집
+        referenced_volume_names = set()
+        for sc in task.sidecars:
+            for vm in sc.volume_mounts:
+                referenced_volume_names.add(vm.name)
+        if hasattr(task, 'volume_mounts') and task.volume_mounts:
+            for vm in task.volume_mounts:
+                referenced_volume_names.add(vm.name)
+
+        # 사이드카 컨테이너 코드 생성
+        sidecar_items = []
+        for sc in task.sidecars:
+            parts = [f"name='{sc.name}'", f"image='{sc.image}'"]
+
+            if sc.volume_mounts:
+                mounts = [
+                    f"k8s.V1VolumeMount(name='{vm.name}', mount_path='{vm.mount_path}')"
+                    for vm in sc.volume_mounts
+                ]
+                parts.append(f"volume_mounts=[{', '.join(mounts)}]")
+
+            if sc.env:
+                envs = [
+                    f"k8s.V1EnvVar(name='{k}', value='{v}')"
+                    for k, v in sc.env.items()
+                ]
+                parts.append(f"env=[{', '.join(envs)}]")
+
+            if sc.cpu or sc.memory:
+                requests = {}
+                limits = {}
+                if sc.cpu:
+                    requests['cpu'] = sc.cpu
+                    limits['cpu'] = sc.cpu
+                if sc.memory:
+                    requests['memory'] = sc.memory
+                    limits['memory'] = sc.memory
+                parts.append(
+                    f"resources=k8s.V1ResourceRequirements("
+                    f"requests={repr(requests)}, limits={repr(limits)})"
+                )
+
+            if sc.command:
+                parts.append(f"command={repr(sc.command)}")
+            if sc.args:
+                parts.append(f"args={repr(sc.args)}")
+
+            params_str = ',\n                        '.join(parts)
+            sidecar_items.append(
+                f"k8s.V1Container(\n                        {params_str}\n                    )"
+            )
+
+        containers_str = ',\n                    '.join(sidecar_items)
+
+        # full_pod_spec에 포함할 emptyDir 볼륨 수집
+        empty_dir_items = []
+        for vol_name in sorted(referenced_volume_names):
+            if vol_name in self.empty_dir_volumes:
+                empty_dir_items.append(
+                    f"k8s.V1Volume(\n                        name='{vol_name}',\n"
+                    f"                        empty_dir=k8s.V1EmptyDirVolumeSource()\n"
+                    f"                    )"
+                )
+
+        if empty_dir_items:
+            volumes_str = ',\n                    '.join(empty_dir_items)
+            spec_body = (
+                f"containers=[\n                    {containers_str}\n                ],\n"
+                f"                volumes=[\n                    {volumes_str}\n                ]"
+            )
+        else:
+            spec_body = f"containers=[\n                    {containers_str}\n                ]"
+
+        return (
+            f"\n        full_pod_spec=k8s.V1Pod(\n"
+            f"            spec=k8s.V1PodSpec(\n"
+            f"                {spec_body}\n"
+            f"            )\n"
+            f"        ),"
+        )
 
     def _encode_workflow(self):
         """전체 workflow.py 코드를 base64로 인코딩"""
@@ -520,9 +614,13 @@ base_volume_mounts = [
         """Volumes 리스트를 k8s.V1Volume 형태로 포맷팅 (한 줄)"""
         volumes_items = []
         for vol in volumes_list:
-            if isinstance(vol, dict) and 'name' in vol and 'persistent_volume_claim' in vol:
+            if not (isinstance(vol, dict) and 'name' in vol):
+                continue
+            if 'persistent_volume_claim' in vol:
                 pvc_claim = f"k8s.V1PersistentVolumeClaimVolumeSource(claim_name='{vol['persistent_volume_claim']}')"
                 volumes_items.append(f"k8s.V1Volume(name='{vol['name']}', persistent_volume_claim={pvc_claim})")
+            elif 'empty_dir' in vol:
+                volumes_items.append(f"k8s.V1Volume(name='{vol['name']}', empty_dir=k8s.V1EmptyDirVolumeSource())")
 
         if len(volumes_items) == 0:
             return "[]"
@@ -535,12 +633,19 @@ base_volume_mounts = [
         """Volumes 리스트를 k8s.V1Volume 문자열 리스트로 반환 (여러 줄 포맷)"""
         volumes_items = []
         for vol in volumes_list:
-            if isinstance(vol, dict) and 'name' in vol and 'persistent_volume_claim' in vol:
+            if not (isinstance(vol, dict) and 'name' in vol):
+                continue
+            if 'persistent_volume_claim' in vol:
                 volumes_items.append(f"""k8s.V1Volume(
             name='{vol['name']}',
             persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
                 claim_name='{vol['persistent_volume_claim']}'
             )
+        )""")
+            elif 'empty_dir' in vol:
+                volumes_items.append(f"""k8s.V1Volume(
+            name='{vol['name']}',
+            empty_dir=k8s.V1EmptyDirVolumeSource()
         )""")
         return volumes_items
 
