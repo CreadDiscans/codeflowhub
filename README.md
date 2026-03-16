@@ -101,6 +101,19 @@ def my_task(args):
 | `node_selector` | 노드 선택 조건 | `{'key': 'value'}` |
 | `volume_mounts` | 볼륨 마운트 | `[VolumeMount(...)]` |
 
+**`args` 기본 제공 값:**
+
+Task 함수가 받는 `args` dict에는 다음 값들이 자동으로 포함됩니다:
+
+| 키 | 설명 | 기본값 |
+|----|------|--------|
+| `args['env']` | 환경 설정 dict (`@flow`의 `env`에서 주입) | — |
+| `args['env']['project']` | 프로젝트 이름 | flow의 `name` 값 |
+| `args['env']['run_id']` | 실행 ID | `'run'` (CLI `--id`로 오버라이드 가능) |
+| `args['env']['task']` | 현재 실행 중인 task 이름 | 각 task의 `name` 값으로 자동 설정 |
+
+이 외에 `@flow`의 `env`에 정의한 모든 키(`WORKSPACE`, `BUCKET` 등)가 `args['env']`에 포함되며, 이전 task의 반환값은 `args` 최상위에 병합됩니다.
+
 ### @flow 데코레이터
 
 워크플로우 전체를 정의합니다.
