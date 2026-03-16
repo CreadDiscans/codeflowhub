@@ -352,4 +352,4 @@ my-workflow/
 
 ## 라이선스
 
-Internal Use Only
+MIT License
