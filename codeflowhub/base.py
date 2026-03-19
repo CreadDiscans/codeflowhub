@@ -66,8 +66,17 @@ class BaseDecorator:
         with open(self.run_log_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+    def _strip_context(self, data):
+        """run log 저장 시 프레임워크 컨텍스트 키 제거"""
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k != 'env'}
+        return data
+
     def _save_run_log(self, input_data, output_data):
         """task의 input/output을 run.json에 저장"""
         run_log = self._load_log_file()
-        run_log[self.name] = {'input': input_data, 'output': output_data}
+        run_log[self.name] = {
+            'input': self._strip_context(input_data),
+            'output': self._strip_context(output_data),
+        }
         self._write_log_file(run_log)

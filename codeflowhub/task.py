@@ -88,6 +88,9 @@ class TaskDecorator(BaseDecorator):
 
         return self
 
+    # 프레임워크가 관리하는 컨텍스트 키
+    _context_keys = ('env',)
+
     def _handle_execution_mode(self, args, kwargs):
         """일반 실행 모드: dict 인자 처리"""
         if len(args) > 1:
@@ -96,14 +99,24 @@ class TaskDecorator(BaseDecorator):
                 if isinstance(arg, dict):
                     merged.update(arg)
             self._inject_task_name(merged)
-            return super().__call__(merged, **kwargs)
+            result = super().__call__(merged, **kwargs)
+            return self._merge_context(merged, result)
 
         if args and isinstance(args[0], dict):
             input_data = args[0].copy()
             self._inject_task_name(input_data)
-            return super().__call__(input_data, **kwargs)
+            result = super().__call__(input_data, **kwargs)
+            return self._merge_context(input_data, result)
 
         return super().__call__(*args, **kwargs)
+
+    def _merge_context(self, input_data, result):
+        """태스크 결과에 프레임워크 컨텍스트를 자동 머지"""
+        if isinstance(result, dict) and isinstance(input_data, dict):
+            for key in self._context_keys:
+                if key in input_data and key not in result:
+                    result[key] = input_data[key]
+        return result
 
     def _inject_task_name(self, data):
         """env에 task 이름 주입"""
