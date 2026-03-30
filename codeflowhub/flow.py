@@ -509,6 +509,10 @@ class FlowDecorator(BaseDecorator):
         - task가 실행된 적이 없으면: 의존하는 task들의 output을 병합하여 반환
         """
         if not os.path.exists(BaseDecorator.run_log_file):
+            # run.json이 없으면 의존성 없는 첫 번째 task인지 확인 후 input.json fallback
+            target_task = next((task for task in self.depend if task.name == task_name), None)
+            if target_task and not target_task.depend:
+                return self._load_input_json_fallback(task_name)
             raise FileNotFoundError(f'{BaseDecorator.run_log_file} 파일이 없습니다. --input-data 인자를 제공하거나 먼저 전체 workflow를 실행하세요.')
 
         run_log = self._load_log_file()
@@ -520,7 +524,8 @@ class FlowDecorator(BaseDecorator):
         # 실행된 적이 없으면 의존 task들의 output을 병합
         target_task = next((task for task in self.depend if task.name == task_name), None)
         if not target_task or not target_task.depend:
-            raise ValueError(f'Task "{task_name}"의 실행 로그가 없고 의존 task도 없습니다. --input-data를 제공하거나 먼저 필요한 task들을 실행하세요.')
+            # 의존성 없는 첫 번째 task — input.json fallback
+            return self._load_input_json_fallback(task_name)
 
         # 의존 task들의 output 수집
         merged_input = {}
@@ -539,6 +544,19 @@ class FlowDecorator(BaseDecorator):
             raise ValueError(f'Task "{task_name}"의 의존 task가 실행되지 않았습니다: {missing_deps}. 먼저 해당 task들을 실행하세요.')
 
         return merged_input
+
+    def _load_input_json_fallback(self, task_name):
+        """의존성 없는 첫 번째 task일 때 input.json에서 입력 데이터 로드"""
+        input_json_path = os.path.join(os.path.dirname(BaseDecorator.run_log_file), 'input.json')
+        if os.path.exists(input_json_path):
+            with open(input_json_path, 'r') as f:
+                data = json.load(f)
+            print(f'📂 Loading input from {input_json_path} (no run.json)')
+            return data
+        raise FileNotFoundError(
+            f'Task "{task_name}"의 실행 로그가 없고 {input_json_path}도 없습니다. '
+            f'--input-data를 제공하거나 먼저 전체 workflow를 실행하세요.'
+        )
 
     def export_airflow(self, output_path=None, schedule_interval=None, start_date=None, default_args=None):
         """

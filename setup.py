@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='codeflowhub',
-    version='0.1.3',
+    version='0.1.4',
     description='workflow development tools',
     author='creaddiscans',
     author_email='creaddiscans@gmail.com',
