@@ -28,6 +28,9 @@ class AirflowExporter:
         # XCom sidecar image: flow의 airflow_sidecar_image를 우선 사용, 없으면 env에서
         self.xcom_sidecar_image = flow_decorator.airflow_sidecar_image or self.env.get('XCOM_SIDECAR_IMAGE', None)
 
+        # Airflow Connection ID for XCom API fetch (None이면 기존 heredoc 방식)
+        self.airflow_connection_id = flow_decorator.airflow_connection_id
+
         # 추가 패키지 경로들 (env에서 설정 가능)
         self.extra_packages = self.env.get('EXTRA_PACKAGES', [])
 
@@ -128,6 +131,18 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from kubernetes.client import models as k8s
+'''
+
+        # Airflow Connection for XCom API fetch
+        if self.airflow_connection_id:
+            header += f'''
+from airflow.hooks.base import BaseHook
+_conn = BaseHook.get_connection('{self.airflow_connection_id}')
+_fh_api_env = [
+    k8s.V1EnvVar(name='FLOWHUB_API_URL', value=f"{{_conn.schema}}://{{_conn.host}}:{{_conn.port}}"),
+    k8s.V1EnvVar(name='FLOWHUB_API_USER', value=_conn.login),
+    k8s.V1EnvVar(name='FLOWHUB_API_PASS', value=_conn.password),
+]
 '''
 
         # XCom sidecar 설정
@@ -281,10 +296,15 @@ base_volume_mounts = [
         # failure handler는 retries=0 설정
         retries_code = "\n        retries=0," if trigger_rule == 'one_failed' else ""
 
+        # XCom API fetch를 사용하는 task에 env_vars 주입 (is_first: params fetch, depend: xcom fetch)
+        env_vars_code = ""
+        if self.airflow_connection_id and (is_first or task.depend):
+            env_vars_code = "\n        env_vars=_fh_api_env,"
+
         operator_code = f'''    {task.name} = KubernetesPodOperator(
         **common,
         task_id='{task.name}',
-        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
+        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{env_vars_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
         arguments=[
             f\'\'\'{arguments}\'\'\'
         ],
@@ -295,13 +315,29 @@ base_volume_mounts = [
     def _generate_input_commands(self, task, is_first):
         """Input 데이터 명령어 생성"""
         if is_first:
+            if self.airflow_connection_id:
+                return (
+                    f'python3 -m codeflowhub.airflow.xcom params '
+                    f'{{{{{{{{ dag.dag_id }}}}}}}} {{{{{{{{ dag_run.run_id }}}}}}}} '
+                    f'/app/input/0.json'
+                )
             return '\n'.join(["cat << 'EOF' > /app/input/0.json", '{{{{ params | tojson }}}}', 'EOF'])
         if not task.depend:
             return "echo '{{}}' >> /app/input/0.json"
 
-        commands = [
-            '\n'.join([f"cat << 'EOF' > /app/input/{i}.json", f'{{{{{{{{ ti.xcom_pull(task_ids=\"{dep.name}\") | tojson }}}}}}}}', 'EOF'])
-            for i, dep in enumerate(task.depend)]
+        if self.airflow_connection_id:
+            # XCom API fetch 방식 (ARG_MAX safe)
+            commands = [
+                f'python3 -m codeflowhub.airflow.xcom xcom '
+                f'{{{{{{{{ dag.dag_id }}}}}}}} {{{{{{{{ dag_run.run_id }}}}}}}} '
+                f'{dep.name} /app/input/{i}.json'
+                for i, dep in enumerate(task.depend)
+            ]
+        else:
+            # 기존 heredoc 방식 (하위 호환)
+            commands = [
+                '\n'.join([f"cat << 'EOF' > /app/input/{i}.json", f'{{{{{{{{ ti.xcom_pull(task_ids=\"{dep.name}\") | tojson }}}}}}}}', 'EOF'])
+                for i, dep in enumerate(task.depend)]
         return "\n                ".join(commands)
 
     def _build_tolerations_code(self, task):

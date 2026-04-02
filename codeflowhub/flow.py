@@ -23,13 +23,14 @@ class FlowDecorator(BaseDecorator):
     service_account_name:str  # Kubernetes service account name
     volumes:list  # Kubernetes volumes
     airflow_sidecar_image:str  # Airflow XCom sidecar 이미지
+    airflow_connection_id:str  # Airflow Connection ID for XCom API fetch
     repo:str  # Git repository URL
     path:str  # Git repo 내 작업 경로
     on_failure: 'BaseDecorator' = None  # 모든 task의 기본 failure handler
 
     def __init__(self, *args, namespace='default', env=None, name=None, description=None, params=None,
                  tags=None, annotations=None, service_account_name=None, volumes=None,
-                 airflow_sidecar_image=None, repo=None, path=None, on_failure=None, **kwargs):
+                 airflow_sidecar_image=None, airflow_connection_id=None, repo=None, path=None, on_failure=None, **kwargs):
         # CLI 속성 먼저 초기화 (init()에서 사용됨)
         self._cli_export = None
         self._cli_job_dir = None
@@ -47,6 +48,7 @@ class FlowDecorator(BaseDecorator):
         self.service_account_name = service_account_name
         self.volumes = volumes or []
         self.airflow_sidecar_image = airflow_sidecar_image
+        self.airflow_connection_id = airflow_connection_id
         self.repo = repo
         self.path = path
         self.on_failure = on_failure
@@ -79,7 +81,7 @@ class FlowDecorator(BaseDecorator):
     def _create_parser(cls, add_help=True):
         """FlowhHub CLI 파서 생성"""
         parser = argparse.ArgumentParser(description='FlowhHub Workflow', add_help=add_help)
-        parser.add_argument('--env', type=str, default='default', help='Environment to use (default: default)')
+        parser.add_argument('--env', type=str, default=None, help='Environment to use (default: default, or --export value if exporting)')
         parser.add_argument('--id', type=str, default=None, help='Workflow run ID (default: run)')
         parser.add_argument('--export', type=str, default=None, help='Export to external system (airflow)')
         parser.add_argument('--job', type=str, default=None, help='Job directory path (auto-sets --input-data and --run-log)')
@@ -183,6 +185,10 @@ class FlowDecorator(BaseDecorator):
             # 내부 파싱 시에는 add_help=False (외부 파서와 충돌 방지)
             parser = self._create_parser(add_help=False)
             args, _ = parser.parse_known_args()
+
+        # --env 미지정 시: --export가 있으면 export 값, 없으면 'default'
+        if args.env is None:
+            args.env = args.export if args.export and args.export in self.env_config else 'default'
 
         if args.env and args.env in self.env_config:
             self.select_env(args.env)
