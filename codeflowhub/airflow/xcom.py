@@ -69,11 +69,24 @@ def _api_request(path: str):
 
 
 def _write_json(content, output_path: str):
-    """Write JSON content to file."""
+    """Write JSON content to file.
+
+    Handles both parsed objects (dict/list) and string values.
+    String values may be valid JSON or Python repr (single quotes) —
+    both are normalized to valid JSON output.
+    """
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'w') as f:
         if isinstance(content, str):
-            f.write(content)
+            # Airflow XCom API가 Python repr 문자열로 반환할 수 있음
+            # e.g. "{'key': 'value'}" (싱글쿼트) → valid JSON으로 변환 필요
+            try:
+                json.loads(content)  # 이미 valid JSON이면 그대로 출력
+                f.write(content)
+            except json.JSONDecodeError:
+                import ast
+                parsed = ast.literal_eval(content)
+                json.dump(parsed, f)
         else:
             json.dump(content, f)
 
