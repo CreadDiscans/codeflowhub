@@ -353,8 +353,8 @@ class FlowDecorator(BaseDecorator):
         """개별 task 결과를 run.json에 저장"""
         run_log = self._load_log_file()
         run_log[task_name] = {
-            'input': result,
-            'output': result
+            'input': self._strip_context(result),
+            'output': self._strip_context(result)
         }
         self._write_log_file(run_log)
 
