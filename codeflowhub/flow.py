@@ -26,11 +26,13 @@ class FlowDecorator(BaseDecorator):
     airflow_connection_id:str  # Airflow Connection ID for XCom API fetch
     repo:str  # Git repository URL
     path:str  # Git repo 내 작업 경로
+    export_destination:str  # Export 시 생성 파일 저장 디렉토리
     on_failure: 'BaseDecorator' = None  # 모든 task의 기본 failure handler
 
     def __init__(self, *args, namespace='default', env=None, name=None, description=None, params=None,
                  tags=None, annotations=None, service_account_name=None, volumes=None,
-                 airflow_sidecar_image=None, airflow_connection_id=None, repo=None, path=None, on_failure=None, **kwargs):
+                 airflow_sidecar_image=None, airflow_connection_id=None, repo=None, path=None,
+                 export_destination='dags', on_failure=None, **kwargs):
         # CLI 속성 먼저 초기화 (init()에서 사용됨)
         self._cli_export = None
         self._cli_job_dir = None
@@ -51,6 +53,7 @@ class FlowDecorator(BaseDecorator):
         self.airflow_connection_id = airflow_connection_id
         self.repo = repo
         self.path = path
+        self.export_destination = export_destination or 'dags'
         self.on_failure = on_failure
 
         self._initialize_env(env)
@@ -253,10 +256,11 @@ class FlowDecorator(BaseDecorator):
         from datetime import datetime, timedelta
 
         flow_id = self.flow_name or self.name
-        print(f'🚀 Exporting {flow_id} to Airflow DAG...')
+        dest_dir = self.export_destination or 'dags'
+        print(f'🚀 Exporting {flow_id} to Airflow DAG... (destination: {dest_dir})')
 
         dag_path = self.export_airflow(
-            output_path=f'dags/{flow_id}_dag.py',
+            output_path=os.path.join(dest_dir, f'{flow_id}_dag.py'),
             schedule_interval=None,
             start_date=datetime.now(),
             default_args={
