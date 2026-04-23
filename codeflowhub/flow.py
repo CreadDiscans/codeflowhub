@@ -27,12 +27,13 @@ class FlowDecorator(BaseDecorator):
     repo:str  # Git repository URL
     path:str  # Git repo 내 작업 경로
     export_destination:str  # Export 시 생성 파일 저장 디렉토리
+    default_args:dict  # Airflow DAG default_args (owner, retries, retry_delay 등 override)
     on_failure: 'BaseDecorator' = None  # 모든 task의 기본 failure handler
 
     def __init__(self, *args, namespace='default', env=None, name=None, description=None, params=None,
                  tags=None, annotations=None, service_account_name=None, volumes=None,
                  airflow_sidecar_image=None, airflow_connection_id=None, repo=None, path=None,
-                 export_destination='dags', on_failure=None, **kwargs):
+                 export_destination='dags', default_args=None, on_failure=None, **kwargs):
         # CLI 속성 먼저 초기화 (init()에서 사용됨)
         self._cli_export = None
         self._cli_job_dir = None
@@ -54,6 +55,7 @@ class FlowDecorator(BaseDecorator):
         self.repo = repo
         self.path = path
         self.export_destination = export_destination or 'dags'
+        self.default_args = default_args or {}
         self.on_failure = on_failure
 
         self._initialize_env(env)
@@ -259,15 +261,18 @@ class FlowDecorator(BaseDecorator):
         dest_dir = self.export_destination or 'dags'
         print(f'🚀 Exporting {flow_id} to Airflow DAG... (destination: {dest_dir})')
 
+        default_args = {
+            'owner': 'flowhub',
+            'retries': 1,
+            'retry_delay': timedelta(minutes=5),
+            **(self.default_args or {}),
+        }
+
         dag_path = self.export_airflow(
             output_path=os.path.join(dest_dir, f'{flow_id}_dag.py'),
             schedule_interval=None,
             start_date=datetime.now(),
-            default_args={
-                'owner': 'flowhub',
-                'retries': 1,
-                'retry_delay': timedelta(minutes=5),
-            }
+            default_args=default_args,
         )
 
         print(f'✅ Successfully exported to: {dag_path}')
