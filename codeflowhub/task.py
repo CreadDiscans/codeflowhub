@@ -13,11 +13,13 @@ class TaskDecorator(BaseDecorator):
     tolerations: list[Toleration]
     volume_mounts: list[VolumeMount]
     sidecars: list[SidecarContainer]
+    affinity: dict
 
     def __init__(self, *args, cpu='1', memory='1Gi', gpu=None, image=None,
                  node_selector=None, tolerations: list[Toleration] = None,
                  volume_mounts: list[VolumeMount] = None, pool: str = None,
-                 sidecars: list[SidecarContainer] = None, **kwargs):
+                 sidecars: list[SidecarContainer] = None, affinity: dict = None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.set_resource(cpu, memory, gpu)
         self.image = image
@@ -26,6 +28,7 @@ class TaskDecorator(BaseDecorator):
         self.volume_mounts = volume_mounts or []
         self.pool = pool
         self.sidecars = sidecars or []
+        self.affinity = affinity or {}
         self._is_flowhub_task = True
 
     def set_resource(self, cpu, memory, gpu):

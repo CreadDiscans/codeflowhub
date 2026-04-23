@@ -283,6 +283,7 @@ base_volume_mounts = [
 
         tolerations_code = self._build_tolerations_code(task)
         node_selector_code = self._build_node_selector_code(task)
+        affinity_code = self._build_affinity_code(task)
         volume_mounts_code = self._build_volume_mounts_code(task)
         container_resources_code = self._build_container_resources_code(task)
         sidecars_code = self._build_sidecars_code(task)
@@ -304,7 +305,7 @@ base_volume_mounts = [
         operator_code = f'''    {task.name} = KubernetesPodOperator(
         **common,
         task_id='{task.name}',
-        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{env_vars_code}{tolerations_code}{node_selector_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
+        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{env_vars_code}{tolerations_code}{node_selector_code}{affinity_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
         arguments=[
             f\'\'\'{arguments}\'\'\'
         ],
@@ -360,6 +361,107 @@ base_volume_mounts = [
         if hasattr(task, 'node_selector') and task.node_selector:
             return f"\n        node_selector={repr(task.node_selector)},"
         return ""
+
+    def _build_affinity_code(self, task):
+        """Affinity 코드 생성 (node_affinity 지원)
+
+        affinity dict는 K8s YAML 구조를 그대로 따르며, camelCase/snake_case 모두 허용.
+        예:
+            affinity={
+                'node_affinity': {
+                    'required_during_scheduling_ignored_during_execution': {
+                        'node_selector_terms': [
+                            {'match_expressions': [
+                                {'key': 'workload-type/spot', 'operator': 'In', 'values': ['true']}
+                            ]}
+                        ]
+                    },
+                    'preferred_during_scheduling_ignored_during_execution': [
+                        {'weight': 100, 'preference': {
+                            'match_expressions': [
+                                {'key': 'workload-type/spot', 'operator': 'In', 'values': ['true']}
+                            ]
+                        }}
+                    ]
+                }
+            }
+        """
+        if not (hasattr(task, 'affinity') and task.affinity):
+            return ""
+
+        aff = self._normalize_keys(task.affinity)
+        parts = []
+        if 'node_affinity' in aff:
+            node_aff_code = self._render_node_affinity(aff['node_affinity'])
+            if node_aff_code:
+                parts.append(f"node_affinity={node_aff_code}")
+
+        if not parts:
+            return ""
+
+        return f"\n        affinity=k8s.V1Affinity({', '.join(parts)}),"
+
+    def _render_node_affinity(self, node_aff):
+        """k8s.V1NodeAffinity(...) 코드 생성"""
+        na = self._normalize_keys(node_aff)
+        parts = []
+
+        if 'required_during_scheduling_ignored_during_execution' in na:
+            required = self._normalize_keys(na['required_during_scheduling_ignored_during_execution'])
+            terms = required.get('node_selector_terms', [])
+            terms_code = ', '.join(self._render_node_selector_term(t) for t in terms)
+            parts.append(
+                f"required_during_scheduling_ignored_during_execution="
+                f"k8s.V1NodeSelector(node_selector_terms=[{terms_code}])"
+            )
+
+        if 'preferred_during_scheduling_ignored_during_execution' in na:
+            prefs = na['preferred_during_scheduling_ignored_during_execution'] or []
+            pref_codes = []
+            for pref in prefs:
+                p = self._normalize_keys(pref)
+                weight = p.get('weight', 1)
+                preference = self._render_node_selector_term(p.get('preference', {}))
+                pref_codes.append(
+                    f"k8s.V1PreferredSchedulingTerm(weight={weight}, preference={preference})"
+                )
+            parts.append(
+                f"preferred_during_scheduling_ignored_during_execution=[{', '.join(pref_codes)}]"
+            )
+
+        return f"k8s.V1NodeAffinity({', '.join(parts)})"
+
+    def _render_node_selector_term(self, term):
+        """k8s.V1NodeSelectorTerm(...) 코드 생성"""
+        t = self._normalize_keys(term)
+        parts = []
+
+        for field_key, api_key in [('match_expressions', 'match_expressions'),
+                                   ('match_fields', 'match_fields')]:
+            if field_key in t:
+                req_codes = [self._render_node_selector_requirement(r) for r in t[field_key]]
+                parts.append(f"{api_key}=[{', '.join(req_codes)}]")
+
+        return f"k8s.V1NodeSelectorTerm({', '.join(parts)})"
+
+    def _render_node_selector_requirement(self, req):
+        """k8s.V1NodeSelectorRequirement(...) 코드 생성"""
+        r = self._normalize_keys(req)
+        req_parts = [f"key={repr(r['key'])}", f"operator={repr(r['operator'])}"]
+        if 'values' in r:
+            req_parts.append(f"values={repr(list(r['values']))}")
+        return f"k8s.V1NodeSelectorRequirement({', '.join(req_parts)})"
+
+    @staticmethod
+    def _normalize_keys(d):
+        """dict의 최상위 키를 camelCase → snake_case로 정규화"""
+        import re
+        if not isinstance(d, dict):
+            return d
+        return {
+            re.sub(r'([A-Z])', r'_\1', k).lower().lstrip('_'): v
+            for k, v in d.items()
+        }
 
     def _build_volume_mounts_code(self, task, include_base=True):
         """Volume mounts 코드 생성
