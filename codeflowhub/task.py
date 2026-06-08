@@ -1,5 +1,5 @@
 from .base import BaseDecorator
-from .model import Toleration, VolumeMount, SidecarContainer
+from .model import Toleration, VolumeMount, SidecarContainer, Secret
 from .action import Action
 
 class TaskDecorator(BaseDecorator):
@@ -14,11 +14,13 @@ class TaskDecorator(BaseDecorator):
     volume_mounts: list[VolumeMount]
     sidecars: list[SidecarContainer]
     affinity: dict
+    secrets: list[Secret]
 
     def __init__(self, *args, cpu='1', memory='1Gi', gpu=None, image=None,
                  node_selector=None, tolerations: list[Toleration] = None,
                  volume_mounts: list[VolumeMount] = None, pool: str = None,
                  sidecars: list[SidecarContainer] = None, affinity: dict = None,
+                 secrets: list[Secret] = None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.set_resource(cpu, memory, gpu)
@@ -29,6 +31,8 @@ class TaskDecorator(BaseDecorator):
         self.pool = pool
         self.sidecars = sidecars or []
         self.affinity = affinity or {}
+        # Design Ref: §3.1 — K8s Secret을 env로 주입
+        self.secrets = secrets or []
         self._is_flowhub_task = True
 
     def set_resource(self, cpu, memory, gpu):

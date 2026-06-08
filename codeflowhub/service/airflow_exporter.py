@@ -74,6 +74,18 @@ class AirflowExporter:
             if volumes_list:
                 self.common_config['volumes'] = volumes_list
 
+        # Design Ref: §4.1 — Secret(env) 수집
+        # flow-level secrets는 base_secrets로 분리 (volume_mounts 패턴과 동일, **common 충돌 방지)
+        self.flow_secrets = getattr(flow_decorator, 'secrets', None) or []
+
+        # secret 존재 여부 (import 생성 조건). on_failure task 포함
+        _all_tasks = list(flow_decorator.depend or [])
+        if flow_decorator.on_failure:
+            _all_tasks.append(flow_decorator.on_failure)
+        self._has_secrets = bool(self.flow_secrets) or any(
+            getattr(t, 'secrets', None) for t in _all_tasks
+        )
+
     def export(self,
                output_path: str = None,
                schedule_interval: Optional[str] = None,
@@ -131,6 +143,11 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from kubernetes.client import models as k8s
+'''
+
+        # Design Ref: §4.2 — Secret(env) 사용 시에만 import 생성
+        if self._has_secrets:
+            header += '''from airflow.providers.cncf.kubernetes.secret import Secret
 '''
 
         # Airflow Connection for XCom API fetch
@@ -235,6 +252,17 @@ base_volume_mounts = [
 
 '''
 
+        # Design Ref: §4.3 — flow-level secrets를 base_secrets 변수로 분리
+        # (task-level secrets와 `base_secrets + [...]`로 병합, **common 키워드 충돌 방지)
+        secrets_definition = ""
+        if self.flow_secrets:
+            base_items = [self._render_secret(s) for s in self.flow_secrets]
+            secrets_definition = (
+                "# Base secrets (flow-level)\nbase_secrets = [\n    "
+                + ",\n    ".join(base_items)
+                + "\n]\n\n"
+            )
+
         # Task 정의들 (일반 workflow tasks만)
         tasks_code = "with dag:\n"
         for i, task in enumerate(self.flow.depend):
@@ -264,7 +292,7 @@ base_volume_mounts = [
                 tasks_code += f"    # Failure handler dependency\n"
                 tasks_code += f"    [{', '.join(last_tasks)}] >> {self.flow.on_failure.name}\n"
 
-        return header + dag_definition + common_definition + tasks_code
+        return header + dag_definition + common_definition + secrets_definition + tasks_code
 
     def _generate_task_operator(self, task, is_first=False, trigger_rule=None):
         """KubernetesPodOperator 생성"""
@@ -302,10 +330,13 @@ base_volume_mounts = [
         if self.airflow_connection_id and (is_first or task.depend):
             env_vars_code = "\n        env_vars=_fh_api_env,"
 
+        # Design Ref: §4.5 — Secret(env) 주입 (flow base_secrets + task secrets 병합)
+        secrets_code = self._build_secrets_code(task)
+
         operator_code = f'''    {task.name} = KubernetesPodOperator(
         **common,
         task_id='{task.name}',
-        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{env_vars_code}{tolerations_code}{node_selector_code}{affinity_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
+        image='{task_image}',{pool_code}{trigger_rule_code}{retries_code}{env_vars_code}{secrets_code}{tolerations_code}{node_selector_code}{affinity_code}{volume_mounts_code}{container_resources_code}{sidecars_code}
         arguments=[
             f\'\'\'{arguments}\'\'\'
         ],
@@ -495,6 +526,32 @@ base_volume_mounts = [
 
         # repo가 있을 때는 task별 volume_mounts만 사용
         return f"\n        volume_mounts=[{', '.join(volume_mounts_items)}]," if volume_mounts_items else ""
+
+    def _render_secret(self, s):
+        """단일 Secret → Airflow Secret('env', ...) 코드 문자열 (Design Ref: §4.4)
+
+        - key 지정: 키 단위 → Secret('env', env_name, secret, key)
+        - key 생략: secret 전체(envFrom) → Secret('env', None, secret)
+        """
+        if s.key is None:
+            return f"Secret('env', None, '{s.secret}')"
+        return f"Secret('env', '{s.env_name}', '{s.secret}', '{s.key}')"
+
+    def _build_secrets_code(self, task):
+        """Task secrets 렌더 + flow-level base_secrets 병합 (Design Ref: §4.4)
+
+        base_secrets는 **common이 아닌 별도 변수로 병합 (volume_mounts 패턴).
+        """
+        task_items = [self._render_secret(s) for s in (getattr(task, 'secrets', None) or [])]
+        has_base = bool(self.flow_secrets)
+
+        if has_base and task_items:
+            return f"\n        secrets=base_secrets + [{', '.join(task_items)}],"
+        elif has_base:
+            return "\n        secrets=base_secrets,"
+        elif task_items:
+            return f"\n        secrets=[{', '.join(task_items)}],"
+        return ""
 
     def _build_custom_cli_args(self):
         """커스텀 CLI 인자를 명령줄 문자열로 변환
